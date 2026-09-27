@@ -6,56 +6,196 @@
 <title>Scanner QR Absensi - STITNU Al-Mahsuni</title>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/html5-qrcode/2.3.8/html5-qrcode.min.js"></script>
 <style>
-*{box-sizing:border-box}body{margin:0;font-family:system-ui,-apple-system,Segoe UI,sans-serif;background:#0f172a;color:#0f172a;min-height:100vh}.wrap{max-width:620px;margin:auto;padding:14px}.card{background:#fff;border-radius:22px;padding:18px;box-shadow:0 18px 50px rgba(0,0,0,.3)}h1{font-size:23px;margin:0 0 4px}.muted{color:#64748b;font-size:13px}.status{margin:14px 0;padding:12px;border-radius:12px;background:#f1f5f9;color:#334155;font-size:13px}.ok{background:#dcfce7;color:#166534}.err{background:#fee2e2;color:#991b1b}.btns{display:grid;grid-template-columns:1fr 1fr;gap:9px;margin-top:12px}.btn{border:0;border-radius:12px;padding:13px;font-weight:800;font-size:14px;cursor:pointer}.primary{background:#0f766e;color:#fff}.secondary{background:#e2e8f0;color:#0f172a}.danger{background:#fee2e2;color:#991b1b}#reader{width:100%;overflow:hidden;border-radius:16px;background:#020617;min-height:290px}#reader video{width:100%!important;border-radius:14px}@media(max-width:430px){.btns{grid-template-columns:1fr}.wrap{padding:9px}}
+*{box-sizing:border-box}
+body{margin:0;font-family:system-ui,-apple-system,Segoe UI,sans-serif;background:#0f172a;color:#0f172a;min-height:100vh}
+.wrap{max-width:620px;margin:auto;padding:14px}.card{background:#fff;border-radius:22px;padding:18px;box-shadow:0 18px 50px rgba(0,0,0,.3)}
+h1{font-size:23px;margin:0 0 4px}.muted{color:#64748b;font-size:13px}
+.status{margin:14px 0;padding:12px;border-radius:12px;background:#f1f5f9;color:#334155;font-size:13px;line-height:1.45}
+.ok{background:#dcfce7;color:#166534}.err{background:#fee2e2;color:#991b1b}.warn{background:#fef3c7;color:#92400e}
+#reader{width:100%;overflow:hidden;border-radius:16px;background:#020617;min-height:290px}
+#reader video{width:100%!important;height:auto!important;border-radius:14px;display:block}
+.btns{display:grid;grid-template-columns:1fr 1fr;gap:9px;margin-top:12px}
+.btn{border:0;border-radius:12px;padding:13px;font-weight:800;font-size:14px;cursor:pointer}
+.btn:disabled{opacity:.55;cursor:not-allowed}.primary{background:#0f766e;color:#fff}.secondary{background:#e2e8f0;color:#0f172a}
+.danger{background:#fee2e2;color:#991b1b}.small{font-size:12px;color:#64748b;margin-top:10px}
+@media(max-width:430px){.btns{grid-template-columns:1fr}.wrap{padding:9px}}
 </style>
 </head>
 <body>
 <div class="wrap"><div class="card">
   <h1>Scan QR Absensi Staff</h1>
   <div class="muted">STITNU Al-Mahsuni · kamera live HTTPS</div>
-  <div id="status" class="status">Menyiapkan scanner...</div>
+  <div id="status" class="status">Scanner siap. Pilih kamera.</div>
   <div id="reader"></div>
   <div class="btns">
-    <button class="btn primary" onclick="start('environment')">Kamera Belakang</button>
-    <button class="btn secondary" onclick="start('user')">Kamera Depan</button>
-    <button class="btn danger" onclick="stop()">Hentikan</button>
-    <button class="btn secondary" onclick="closeMe()">Kembali</button>
+    <button id="backBtn" class="btn primary" onclick="start('environment')">📷 Kamera Belakang</button>
+    <button id="frontBtn" class="btn secondary" onclick="start('user')">🔄 Kamera Depan</button>
+    <button id="stopBtn" class="btn danger" onclick="stop(true)">⏹ Hentikan Kamera</button>
+    <button id="closeBtn" class="btn secondary" onclick="closeMe()">↩ Kembali</button>
   </div>
+  <div class="small">Jika kamera belum muncul, tekan <b>Kamera Belakang</b> sekali lagi dan izinkan akses kamera.</div>
 </div></div>
 <script>
 const params=new URLSearchParams(location.search);
 const nonce=params.get('nonce')||'';
-let scanner=null, locked=false;
+let scanner=null, locked=false, starting=false;
+
 const statusEl=document.getElementById('status');
-function status(msg,cls=''){statusEl.className='status '+cls;statusEl.textContent=msg}
-async function stop(){if(scanner){try{await scanner.stop()}catch(e){}try{scanner.clear()}catch(e){}scanner=null}status('Kamera dihentikan. Tekan tombol kamera untuk mulai.')}
+const buttons=[document.getElementById('backBtn'),document.getElementById('frontBtn'),
+               document.getElementById('stopBtn'),document.getElementById('closeBtn')];
+
+function status(msg,cls=''){
+  statusEl.className='status '+cls;
+  statusEl.textContent=msg;
+}
+function setBusy(v){
+  starting=v;
+  document.getElementById('backBtn').disabled=v;
+  document.getElementById('frontBtn').disabled=v;
+}
+
+async function cleanupScanner(){
+  const old=scanner;
+  scanner=null;
+  if(old){
+    try{await old.stop();}catch(e){}
+    try{old.clear();}catch(e){}
+  }
+  const reader=document.getElementById('reader');
+  if(reader) reader.innerHTML='';
+}
+
+async function stop(showMessage=true){
+  locked=false;
+  await cleanupScanner();
+  if(showMessage) status('Kamera dihentikan. Pilih tombol Kamera Belakang atau Kamera Depan untuk mulai.','warn');
+}
+
+function explainCameraError(e){
+  const name=String(e&&e.name||'');
+  const msg=String(e&&e.message||e||'');
+  if(/NotAllowedError|PermissionDenied|denied/i.test(name+' '+msg))
+    return 'Izin kamera ditolak. Izinkan kamera pada browser untuk halaman scanner ini, lalu tekan Kamera Belakang.';
+  if(/NotFoundError|DevicesNotFound/i.test(name+' '+msg))
+    return 'Kamera tidak ditemukan pada perangkat ini.';
+  if(/NotReadableError|TrackStartError/i.test(name+' '+msg))
+    return 'Kamera sedang digunakan aplikasi/tab lain. Tutup aplikasi kamera lain lalu coba lagi.';
+  if(/OverconstrainedError/i.test(name+' '+msg))
+    return 'Kamera pilihan tidak tersedia. Coba tombol Kamera Depan.';
+  if(/SecurityError|secure context/i.test(name+' '+msg))
+    return 'Scanner harus dibuka melalui HTTPS. Jangan membukanya sebagai file lokal.';
+  return 'Kamera gagal dimulai: '+(msg||name||'kesalahan tidak diketahui')+'. Tekan tombol kamera untuk mencoba lagi.';
+}
+
 async function start(mode){
- await stop(); locked=false;
- if(!window.isSecureContext){status('Halaman scanner bukan HTTPS. Gunakan URL HTTPS.','err');return}
- if(!navigator.mediaDevices||!navigator.mediaDevices.getUserMedia){status('Browser tidak mendukung kamera. Gunakan Chrome/Edge/Safari terbaru.','err');return}
- status('Meminta izin kamera...');
- try{
-   scanner=new Html5Qrcode('reader');
-   await scanner.start({facingMode:{ideal:mode}},{fps:12,qrbox:(w,h)=>{const size=Math.max(180,Math.min(300,Math.floor(Math.min(w,h)*.72)));return {width:size,height:size}},aspectRatio:1},onScan,()=>{});
-   status(mode==='user'?'Kamera depan aktif. Arahkan QR ke kotak.':'Kamera belakang aktif. Arahkan QR ke kotak.','ok');
- }catch(e){
-   console.error(e);let m=String(e&&e.name?e.name:e);
-   if(/NotAllowedError|PermissionDenied/i.test(m))m='Izin kamera ditolak. Izinkan kamera untuk situs scanner ini lalu coba lagi.';
-   else if(/NotFoundError|DevicesNotFound/i.test(m))m='Kamera tidak ditemukan.';
-   else if(/NotReadableError|TrackStartError/i.test(m))m='Kamera sedang dipakai aplikasi lain.';
-   else if(/OverconstrainedError/i.test(m))m='Mode kamera tidak tersedia. Coba tombol kamera lainnya.';
-   status(m,'err');await stop();
- }
+  if(starting) return;
+  setBusy(true);
+  locked=false;
+
+  try{
+    await cleanupScanner();
+
+    if(!window.isSecureContext){
+      status('Scanner bukan HTTPS. Buka scanner melalui alamat HTTPS.','err');
+      return;
+    }
+    if(!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia){
+      status('Browser tidak mendukung kamera. Gunakan Chrome/Edge/Safari terbaru.','err');
+      return;
+    }
+    if(typeof Html5Qrcode==='undefined'){
+      status('Library scanner QR belum termuat. Periksa koneksi internet lalu muat ulang.','err');
+      return;
+    }
+
+    status('Meminta izin kamera...','');
+    const candidate=new Html5Qrcode('reader');
+
+    try{
+      await candidate.start(
+        {facingMode:{ideal:mode}},
+        {
+          fps:12,
+          qrbox:(w,h)=>{
+            const size=Math.max(180,Math.min(300,Math.floor(Math.min(w,h)*.72)));
+            return {width:size,height:size};
+          },
+          aspectRatio:1
+        },
+        onScan,
+        ()=>{}
+      );
+    }catch(firstError){
+      // Beberapa perangkat lebih stabil bila memakai kamera yang ditemukan langsung.
+      try{await candidate.clear();}catch(e){}
+      const devices=await Html5Qrcode.getCameras();
+      if(!devices || !devices.length) throw firstError;
+      const index=mode==='environment'?0:Math.min(1,devices.length-1);
+      const deviceId=devices[index].id;
+      const retryScanner=new Html5Qrcode('reader');
+      await retryScanner.start(
+        {deviceId:{exact:deviceId}},
+        {
+          fps:12,
+          qrbox:(w,h)=>{
+            const size=Math.max(180,Math.min(300,Math.floor(Math.min(w,h)*.72)));
+            return {width:size,height:size};
+          }
+        },
+        onScan,
+        ()=>{}
+      );
+      scanner=retryScanner;
+    }
+
+    if(!scanner) scanner=candidate;
+    status(mode==='user'
+      ? 'Kamera depan aktif. Arahkan QR ke kotak.'
+      : 'Kamera belakang aktif. Arahkan QR ke kotak.','ok');
+
+  }catch(e){
+    console.error(e);
+    await cleanupScanner();
+    status(explainCameraError(e),'err');
+  }finally{
+    setBusy(false);
+  }
 }
+
 async function onScan(decoded){
- if(locked)return;locked=true;const value=String(decoded||'').trim();if(!value){locked=false;return}
- await stop();status('QR terbaca. Mengirim ke aplikasi absensi...','ok');
- if(window.opener&&!window.opener.closed){window.opener.postMessage({type:'STITNU_QR_RESULT',value:value,nonce:nonce},'*');setTimeout(()=>window.close(),450)}else{status('Jendela aplikasi asal tidak ditemukan. Silakan tutup scanner dan buka dari aplikasi absensi.','err');locked=false}
+  if(locked) return;
+  locked=true;
+  const value=String(decoded||'').trim();
+  if(!value){locked=false;return}
+
+  await cleanupScanner();
+  status('QR terbaca. Mengirim ke aplikasi absensi...','ok');
+
+  if(window.opener && !window.opener.closed){
+    window.opener.postMessage({
+      type:'STITNU_QR_RESULT',
+      value:value,
+      nonce:nonce
+    },'*');
+    setTimeout(()=>window.close(),450);
+  }else{
+    status('Jendela aplikasi asal tidak ditemukan. Tutup scanner lalu buka kembali dari aplikasi absensi.','err');
+    locked=false;
+  }
 }
-function closeMe(){try{window.close()}catch(e){}setTimeout(()=>{if(!window.closed)location.href='about:blank'},100)}
+
+function closeMe(){
+  cleanupScanner();
+  try{window.close();}catch(e){}
+  setTimeout(()=>{if(!window.closed) history.back();},150);
+}
+
 window.addEventListener('beforeunload',()=>{if(scanner){try{scanner.stop()}catch(e){}}});
+
 const initial=params.get('mode')||'environment';
-status('Tekan Kamera Belakang untuk mulai.');
-setTimeout(()=>start(initial),350);
+// Tidak auto-start agar tombol selalu terlihat dan browser dapat meminta izin kamera
+// setelah tindakan pengguna.
+status('Scanner siap. Tekan Kamera Belakang untuk mulai.');
 </script>
-</body></html>
+</body>
+</html>
